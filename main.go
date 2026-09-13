@@ -1,7 +1,6 @@
 package main
 import(
 	"fmt"
-	"sync"
 	"io"
 	"net/http"
 	"os"
@@ -42,7 +41,7 @@ func (s *Store) Get(key string) ([]byte, error){
 }
 
 func (s *Store) Delete(key string)error{
-	return os.ReadFile(s.pathFor(key))
+	return os.Remove(s.pathFor(key))
 }
 
 func handlePut(store *Store) http.HandlerFunc{
@@ -59,7 +58,7 @@ func handlePut(store *Store) http.HandlerFunc{
 			return
 		}
 		w.WriteHeader(http.StatusCreated)
-		fmt.Fprint(w, "Stored %q (%d bytes)\n", key, len(body))
+		fmt.Fprintf(w, "Stored %q (%d bytes)\n", key, len(body))
 	}
 }
 
@@ -80,6 +79,36 @@ func handleGet(store *Store) http.HandlerFunc {
 	}
 }
 
-func handleDelete(store *store){}
+func handleDelete(store *Store) http.HandlerFunc{
+	return func(w http.ResponseWriter, r*http.Request){
+		key := r.PathValue("key")
+		if err := store.Delete(key); err != nil{
+			if os.IsNotExist(err){
+				http.Error(w, "object not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, "failed to delete object", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+
+func main(){
+	store, err := NewStore("./data")
+	if err != nil{
+		fmt.Println("Failed to init store: ", err)
+		return
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("PUT /objects/{key}", handlePut(store))
+	mux.HandleFunc("GET /objects/{key}", handleGet(store))
+	mux.HandleFunc("DELETE /objects/{key}", handleDelete(store))
+	fmt.Println("listening in :8080")
+	if err := http.ListenAndServe(":8080",mux); err!= nil{
+		fmt.Println("Server error:", err)
+	}
+}
 
 

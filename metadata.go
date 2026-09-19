@@ -5,7 +5,6 @@ import(
 
 	_"github.com/jackc/pgx/v5/stdlib"
 )
-
 // Tier is the storage tier an object currently lives in
 type Tier string
 
@@ -46,7 +45,6 @@ func NewMetadataStore(dsn string) (*MetadataStore, error){
 	}
 	return store, nil
 }
-
 // migrate creates the objects table if it doesnt already exist
 // safe to run on every startup (idempotent)
 
@@ -64,7 +62,30 @@ func (m *MetadataStore) migrate() error{
 _, err := m.db.Exec(schema)
 return err
 }
-
+//RecordPut inserts or updates an object's metadata after it's sorted.
+func (m *MetadataStore) RecordPut(key string, size int64) error{
+	const q = `
+	INSERT INTO objects (key, size, tier, last_accessed)
+	VALUES ($1, $2, 'hot', now())
+	ON CONFLICT (key) DO UPDATE
+	SET size = EXCLUDED.size, last_accessed = now();`
+	_, err := m.db.Exec(q, key, size)
+	return err
+}
+//RecordDelete removes an object's metadata row.
+func (m*MetadataStore) RecordDelete(key string) error{
+	const q = `DELETE FROM objects WHERE key = $1;`
+	_, err := m.db.Exec(q, key)
+	return err
+}
+//RecordAccess bumps access_count and last_accesed on every GET.
+func (m*MetadataStore) RecordAccess(key string) error{
+	const q = `UPDATE objects
+	SET access_count = access_count + 1, last_accessed = now()
+	WHERE key = $1;`
+	_, err := m.db.Exec(q, key)
+	return err
+}
 // Close releases the connection pool
 func (m *MetadataStore) Close()error{
 	return m.db.Close()

@@ -44,17 +44,21 @@ func (s *Store) Delete(key string)error{
 	return os.Remove(s.pathFor(key))
 }
 
-func handlePut(store *Store) http.HandlerFunc{
-	return func(w http.ResponseWriter, r *http.Request){
+func handlePut(store *Store, meta *MetadataStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		key := r.PathValue("key")
 		body, err := io.ReadAll(r.Body)
-		if err!= nil{
+		if err != nil {
 			http.Error(w, "failed to read the body", http.StatusBadRequest)
 			return
 		}
 		defer r.Body.Close()
-		if err := store.Put(key, body); err!=nil{
+		if err := store.Put(key, body); err != nil {
 			http.Error(w, "failed to store object", http.StatusInternalServerError)
+			return
+		}
+		if err := meta.RecordPut(key, int64(len(body))); err != nil {
+			http.Error(w, "Failed to record metadata", http.StatusInternalServerError)
 			return
 		}
 		w.WriteHeader(http.StatusCreated)
@@ -62,7 +66,7 @@ func handlePut(store *Store) http.HandlerFunc{
 	}
 }
 
-func handleGet(store *Store) http.HandlerFunc {
+func handleGet(store *Store, meta *MetadataStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r*http.Request){
 		key := r.PathValue("key")
 		value, err := store.Get(key)
@@ -74,12 +78,15 @@ func handleGet(store *Store) http.HandlerFunc {
 			http.Error(w, "Failed to read object", http.StatusInternalServerError)
 			return
 		}
+		if err := meta.RecordAccess(key); err!=nil{
+			fmt.Println("warining : failed to record access for", key, ":", err)
+		}
 		w.WriteHeader(http.StatusOK)
 		w.Write(value)
 	}
 }
 
-func handleDelete(store *Store) http.HandlerFunc{
+func handleDelete(store *Store, meta *MetadataStore) http.HandlerFunc{
 	return func(w http.ResponseWriter, r*http.Request){
 		key := r.PathValue("key")
 		if err := store.Delete(key); err != nil{
@@ -89,6 +96,10 @@ func handleDelete(store *Store) http.HandlerFunc{
 			}
 			http.Error(w, "failed to delete object", http.StatusInternalServerError)
 			return
+		}
+		if err := meta.RecordDelete(key)
+		err!= nil{
+			fmt.Println("warning: failed to delete metadata for", key, ";", err)
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}
@@ -101,10 +112,18 @@ func main(){
 		fmt.Println("Failed to init store: ", err)
 		return
 	}
+	dsn := "postgres://blob:blob@localhost:5432/blob_storage?sslmode=disable"
+	meta, err := NewMetadataStore(dsn)
+	if err != nil{
+		fmt.Println("Failed to init metadata store: ", err)
+		return
+	}
+	defer meta.Close()
+	fmt.Println("connected to Postgres, schema ready")
 	mux := http.NewServeMux()
-	mux.HandleFunc("PUT /objects/{key}", handlePut(store))
-	mux.HandleFunc("GET /objects/{key}", handleGet(store))
-	mux.HandleFunc("DELETE /objects/{key}", handleDelete(store))
+	mux.HandleFunc("PUT /objects/{key}", handlePut(store, meta))
+	mux.HandleFunc("GET /objects/{key}", handleGet(store, meta))
+	mux.HandleFunc("DELETE /objects/{key}", handleDelete(store, meta))
 	fmt.Println("listening in :8080")
 	if err := http.ListenAndServe(":8080",mux); err!= nil{
 		fmt.Println("Server error:", err)

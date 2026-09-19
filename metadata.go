@@ -90,4 +90,37 @@ func (m*MetadataStore) RecordAccess(key string) error{
 func (m *MetadataStore) Close()error{
 	return m.db.Close()
 }
-
+//GetTier returns the tier an object currently lives in
+func( m*MetadataStore) GetTier(key string) (Tier, error){
+	const q = `SELECT tier FROM objects WHERE key = $1;`
+	var tier Tier
+	err := m.db.QueryRow(q, key).Scan(&tier)
+	return tier, err 
+}
+//MigrationCandidates returns keys of hot objects not accessed since 'cutoff'
+//This is the core tiering query: "What should move to cold?"
+func (m*MetadataStore) MigrationCandidates(cutoff time.Time)([]string, error){
+	const q = `
+	SELECT key FROM objects
+	WHERE tier = 'hot' AND last_accessed < $1;`
+	rows, err := m.db.Query(q, cutoff)
+	if err != nil{
+		return nil, err
+	}
+	defer rows.Close()
+	var keys []string
+	for rows.Next(){
+		var key string 
+		if err := rows.Scan(&key); err!=nil{
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	return keys, rows.Err()
+}
+//SetTier updates an object's tier after it's been migrated
+func (m*MetadataStore) SetTier(key string, tier Tier) error{
+	const q = `UPDATE objects SET tier = $1 WHERE key = $2;`
+	_, err := m.db.Exec(q, tier, key)
+	return err
+}

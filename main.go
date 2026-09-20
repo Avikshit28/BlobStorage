@@ -7,6 +7,7 @@ import(
 	"crypto/sha256"
 	"path/filepath"
 	"encoding/hex"
+	"time"
 )
 //Store holds blob data in the memory, protected by a mutex.
 // Go maps are NOT safe for concurrent access - if one goroutine writes
@@ -155,6 +156,8 @@ func main(){
 	}
 	defer meta.Close()
 	fmt.Println("connected to Postgres, schema ready")
+	mover := NewMover(store, meta, 30*time.Second, 10*time.Second)
+	go mover.Run()
 	mux := http.NewServeMux()
 	mux.HandleFunc("PUT /objects/{key}", handlePut(store, meta))
 	mux.HandleFunc("GET /objects/{key}", handleGet(store, meta))

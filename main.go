@@ -8,7 +8,10 @@ import(
 	"path/filepath"
 	"encoding/hex"
 	"time"
+	"bytes"
+	"compress/gzip"
 )
+
 //Store holds blob data in the memory, protected by a mutex.
 // Go maps are NOT safe for concurrent access - if one goroutine writes
 // while another reads, thats a racearound condition, the runtime will actually crash the program to tell you, if you run this with go run -race
@@ -52,8 +55,16 @@ func(s *Store) Put(key string, value []byte)error{
 }
 
 func (s *Store) Get(key string, tier Tier) ([]byte, error){
-	return os.ReadFile(s.pathFor(key, tier))
+	data, err := os.ReadFile(s.pathFor(key, tier))
+	if err != nil{
+		return nil, err
+	}
+	if tier == TierCold{
+		return decompressBytes(data)
+	}
+	return data, nil
 }
+
 
 func (s *Store) Delete(key string, tier Tier)error{
 	return os.Remove(s.pathFor(key, tier))
@@ -65,7 +76,12 @@ func (s *Store) Migrate(key string) error{
 	if err != nil{
 		return err
 	}
-	if err := os.WriteFile(s.pathFor(key, TierCold), data, 0644); err!= nil{
+	compressed, err := compressBytes(data)
+	if err != nil{
+		return err
+	}
+	if err := os.WriteFile(s.pathFor(key, TierCold), compressed, 0644)
+	err!=nil{
 		return err
 	}
 	return os.Remove(s.pathFor(key, TierHot))
@@ -139,6 +155,31 @@ func handleDelete(store *Store, meta *MetadataStore) http.HandlerFunc{
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+// compressBytes gzip compresses data (used when migrating to cold)
+func compressBytes(data []byte)([]byte, error){
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	if _, err := gw.Write(data); err != nil{
+		return nil, err
+	}
+	if err := gw.Close(); err != nil{
+		return nil, err
+	}
+	if err := gw.Close(); err != nil{
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+//decompressBytes reverses cmpressBytes (used when reading from cold)
+func decompressBytes(data []byte) ([]byte, error){
+	gr, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil{
+		return nil, err
+	}
+	defer gr.Close()
+	return io.ReadAll(gr)
 }
 
 

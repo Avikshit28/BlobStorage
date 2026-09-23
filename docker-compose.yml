@@ -1,4 +1,10 @@
 services:
+  redis:
+    image: redis:7
+    container_name: blob-redis
+    ports:
+      - "6379:6379"
+
   postgres:
     image: postgres:16
     container_name: blob-postgres

@@ -124,3 +124,27 @@ func (m*MetadataStore) SetTier(key string, tier Tier) error{
 	_, err := m.db.Exec(q, tier, key)
 	return err
 }
+
+//Apply Access Counts adds buffered counts to Postgres in one transaction.
+// Each entry bumps that object's access_count and updates last_accessed 
+func (m *MetadataStore) ApplyAccessCounts(counts map[string]int64) error{
+	if len(counts) == 0{
+		return nil // nothing to flush
+	}
+	tx, err := m.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //no-op if we successfully commit 
+
+	const q = `
+	UPDATE objects
+	SET access_count = access_count + $1, last_accessed = now()
+	WHERE key = $2;`
+	for key, count := range counts {
+		if _,err := tx.Exec(q, count, key); err != nil{
+			return err
+		}
+	}
+	return tx.Commit()
+}

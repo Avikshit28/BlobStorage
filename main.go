@@ -80,8 +80,7 @@ func (s *Store) Migrate(key string) error{
 	if err != nil{
 		return err
 	}
-	if err := os.WriteFile(s.pathFor(key, TierCold), compressed, 0644)
-	err!=nil{
+	if err := os.WriteFile(s.pathFor(key, TierCold), compressed, 0644);err!=nil{
 		return err
 	}
 	return os.Remove(s.pathFor(key, TierHot))
@@ -109,7 +108,7 @@ func handlePut(store *Store, meta *MetadataStore) http.HandlerFunc {
 	}
 }
 
-func handleGet(store *Store, meta *MetadataStore) http.HandlerFunc {
+func handleGet(store *Store, meta *MetadataStore, cache *Cache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r*http.Request){
 		key := r.PathValue("key")
 		tier, err := meta.GetTier(key)
@@ -126,7 +125,7 @@ func handleGet(store *Store, meta *MetadataStore) http.HandlerFunc {
 			http.Error(w, "Failed to read object", http.StatusInternalServerError)
 			return
 		}
-		if err := meta.RecordAccess(key); err!= nil{
+		if err := cache.RecordAccess(key); err!= nil{
 			fmt.Println("Warning: failed to record access for", key, ":", err)
 		}
 		w.WriteHeader(http.StatusOK)
@@ -166,9 +165,6 @@ func compressBytes(data []byte)([]byte, error){
 	if err := gw.Close(); err != nil{
 		return nil, err
 	}
-	if err := gw.Close(); err != nil{
-		return nil, err
-	}
 	return buf.Bytes(), nil
 }
 
@@ -196,12 +192,21 @@ func main(){
 		return
 	}
 	defer meta.Close()
+	cache, err := NewCache("localhost:6379")
+	if err != nil{
+		fmt.Println("Failed to init cache: ", err)
+		return
+	}
+	defer cache.Close()
+	fmt.Println("connected to Redis")
 	fmt.Println("connected to Postgres, schema ready")
 	mover := NewMover(store, meta, 30*time.Second, 10*time.Second)
 	go mover.Run()
+	flusher := NewFlusher(cache, meta, 10*time.Second)
+	go flusher.Run()
 	mux := http.NewServeMux()
 	mux.HandleFunc("PUT /objects/{key}", handlePut(store, meta))
-	mux.HandleFunc("GET /objects/{key}", handleGet(store, meta))
+	mux.HandleFunc("GET /objects/{key}", handleGet(store, meta, cache))
 	mux.HandleFunc("DELETE /objects/{key}", handleDelete(store, meta))
 	fmt.Println("listening in :8080")
 	if err := http.ListenAndServe(":8080",mux); err!= nil{
